@@ -217,6 +217,7 @@ if (WITH_JEPSEN)
     ExternalProject_Add(
         jepsen-tests
         GIT_REPOSITORY https://github.com/tarantool/jepsen.tarantool
+        GIT_TAG origin/ylobankov/tarantool-3.0-sql-breaking-change-compatibility
         CONFIGURE_COMMAND ""
         BUILD_COMMAND ""
         INSTALL_COMMAND ""
