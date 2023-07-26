@@ -818,6 +818,22 @@ key_def_has_collation(const struct key_def *key_def)
 }
 
 /**
+ * Return true if any part of @a key_def is descending.
+ * @param key_def key_def
+ * @retval true if the key_def has descending parts
+ * @retval false otherwise
+ */
+static inline bool
+key_def_has_desc_parts(struct key_def *key_def)
+{
+	for (uint32_t part_id = 0; part_id < key_def->part_count; part_id++) {
+		if (key_def->parts[part_id].sort_order == SORT_ORDER_DESC)
+			return true;
+	}
+	return false;
+}
+
+/**
  * Return the first field type which can't be compared if @a key_def
  * has such. Otherwise return field_type_MAX value.
  */

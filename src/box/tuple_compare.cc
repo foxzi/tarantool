@@ -573,6 +573,25 @@ tuple_compare_field_with_type(const char *field_a, enum mp_type a_type,
 }
 
 /*
+ * Reverse the compare result if the key part sort order is descending.
+ */
+static inline int
+key_part_compare_result(struct key_part *part, int result)
+{
+	return result * (part->sort_order == SORT_ORDER_ASC ? 1 : -1);
+}
+
+/*
+ * Compare hints taking first key part's sort order into account.
+ */
+static inline int
+key_hint_cmp(struct key_def *key_def, hint_t hint_a, hint_t hint_b)
+{
+	int rc = hint_cmp(hint_a, hint_b);
+	return key_part_compare_result(&key_def->parts[0], rc);
+}
+
+/*
  * Implements the field comparison logic. If the key we use is not nullable
  * then a simple call to tuple_compare_field is used.
  *
@@ -606,7 +625,7 @@ key_part_compare_fields(struct key_part *part, const char *field_a,
 	if (!is_nullable) {
 		rc = tuple_compare_field(field_a, field_b,
 					 part->type, part->coll);
-		return rc;
+		return key_part_compare_result(part, rc);
 	}
 	enum mp_type a_type = (a_is_optional && field_a == NULL) ?
 			      MP_NIL : mp_typeof(*field_a);
@@ -623,7 +642,7 @@ key_part_compare_fields(struct key_part *part, const char *field_a,
 						   field_b, b_type,
 						   part->type, part->coll);
 	}
-	return rc;
+	return key_part_compare_result(part, rc);
 }
 
 template<bool is_nullable, bool has_optional_parts, bool has_json_paths,
@@ -640,9 +659,12 @@ tuple_compare_slowpath(struct tuple *tuple_a, hint_t tuple_a_hint,
 	assert(key_def->is_multikey == is_multikey);
 	assert(!is_multikey || (tuple_a_hint != HINT_NONE &&
 		tuple_b_hint != HINT_NONE));
-	int rc = 0;
-	if (!is_multikey && (rc = hint_cmp(tuple_a_hint, tuple_b_hint)) != 0)
-		return rc;
+	int rc;
+	if (!is_multikey) {
+		rc = key_hint_cmp(key_def, tuple_a_hint, tuple_b_hint);
+		if (rc != 0)
+			return rc;
+	}
 	struct key_part *part = key_def->parts;
 	const char *tuple_a_raw = tuple_data(tuple_a);
 	const char *tuple_b_raw = tuple_data(tuple_b);
@@ -765,9 +787,12 @@ tuple_compare_with_key_slowpath(struct tuple *tuple, hint_t tuple_hint,
 	assert(key_def->is_multikey == is_multikey);
 	assert(!is_multikey || (tuple_hint != HINT_NONE &&
 		key_hint == HINT_NONE));
-	int rc = 0;
-	if (!is_multikey && (rc = hint_cmp(tuple_hint, key_hint)) != 0)
-		return rc;
+	int rc;
+	if (!is_multikey) {
+		rc = key_hint_cmp(key_def, tuple_hint, key_hint);
+		if (rc != 0)
+			return rc;
+	}
 	struct key_part *part = key_def->parts;
 	struct tuple_format *format = tuple_format(tuple);
 	const char *tuple_raw = tuple_data(tuple);
@@ -874,7 +899,7 @@ tuple_compare_with_key_sequential(struct tuple *tuple, hint_t tuple_hint,
 	assert(key_def_is_sequential(key_def));
 	assert(is_nullable == key_def->is_nullable);
 	assert(has_optional_parts == key_def->has_optional_parts);
-	int rc = hint_cmp(tuple_hint, key_hint);
+	int rc = key_hint_cmp(key_def, tuple_hint, key_hint);
 	if (rc != 0)
 		return rc;
 	const char *tuple_key = tuple_data(tuple);
@@ -917,7 +942,7 @@ key_compare(const char *key_a, uint32_t part_count_a, hint_t key_a_hint,
 	    const char *key_b, uint32_t part_count_b, hint_t key_b_hint,
 	    struct key_def *key_def)
 {
-	int rc = hint_cmp(key_a_hint, key_b_hint);
+	int rc = key_hint_cmp(key_def, key_a_hint, key_b_hint);
 	if (rc != 0)
 		return rc;
 	assert(part_count_a <= key_def->part_count);
@@ -944,7 +969,7 @@ tuple_compare_sequential(struct tuple *tuple_a, hint_t tuple_a_hint,
 	assert(has_optional_parts == key_def->has_optional_parts);
 	assert(key_def_is_sequential(key_def));
 	assert(is_nullable == key_def->is_nullable);
-	int rc = hint_cmp(tuple_a_hint, tuple_b_hint);
+	int rc = key_hint_cmp(key_def, tuple_a_hint, tuple_b_hint);
 	if (rc != 0)
 		return rc;
 	const char *key_a = tuple_data(tuple_a);
@@ -2092,6 +2117,7 @@ key_def_set_compare_func_fast(struct key_def *def)
 	assert(!def->has_optional_parts);
 	assert(!def->has_json_paths);
 	assert(!key_def_has_collation(def));
+	assert(!key_def_has_desc_parts(def));
 
 	tuple_compare_t cmp = NULL;
 	tuple_compare_with_key_t cmp_wk = NULL;
@@ -2193,8 +2219,8 @@ key_def_set_compare_func(struct key_def *def)
 			key_def_set_compare_func_for_func_index<true>(def);
 		else
 			key_def_set_compare_func_for_func_index<false>(def);
-	} else if (!key_def_has_collation(def) &&
-	    !def->is_nullable && !def->has_json_paths) {
+	} else if (!def->is_nullable && !def->has_json_paths &&
+	    !key_def_has_collation(def) && !key_def_has_desc_parts(def)) {
 		key_def_set_compare_func_fast(def);
 	} else if (!def->has_json_paths) {
 		if (def->is_nullable && def->has_optional_parts) {
