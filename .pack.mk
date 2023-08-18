@@ -109,7 +109,7 @@ deploy-static:
 			CURL_CMD="$${CURL_CMD} --form $$(basename $${f})=@$${f}"; \
 		done; \
 		echo $${CURL_CMD}; \
-		$${CURL_CMD}; \
+		echo $${CURL_CMD}; \
 	done;
 
 source: prepare
